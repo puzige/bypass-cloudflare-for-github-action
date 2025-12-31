@@ -19,11 +19,13 @@ This action automatically manages IP whitelisting by creating a Cloudflare custo
 - Automatically cleans up by removing the IP from the list after the job completes.
 
 ## Inputs
-| Input            | Description                | Required |
-| ---------------- | -------------------------- | -------- |
-| `cf_account_id`  | Cloudflare Account ID      | true     |
-| `cf_zone_id`     | Cloudflare Zone ID         | true     |
-| `cf_api_token`   | Cloudflare API Token       | true     |
+| Input                    | Description                                                                                      | Required | Default |
+| ------------------------ | ------------------------------------------------------------------------------------------------ | -------- | ------- |
+| `cf_account_id`          | Cloudflare Account ID                                                                            | true     |         |
+| `cf_zone_id`             | Cloudflare Zone ID                                                                               | true     |         |
+| `cf_api_token`           | Cloudflare API Token                                                                             | true     |         |
+| `disable_bot_fight_mode` | Disable Bot Fight Mode during workflow execution (requires Zone Settings > Edit permission)      | false    | `false` |
+| `bfm_propagation_delay`  | Seconds to wait after disabling Bot Fight Mode for settings to propagate                         | false    | `10`     |
 
 ## Usage
 To use this action, create a workflow in your repository's `.github/workflows` directory. Below is an example workflow file:
@@ -38,7 +40,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
       - name: Bypass Cloudflare for GitHub Action
-        uses: xiaotianxt/bypass-cloudflare-for-github-action@v2.0.1
+        uses: xiaotianxt/bypass-cloudflare-for-github-action@v2.1.0
         with:
           cf_account_id: ${{ secrets.CF_ACCOUNT_ID }}
           cf_zone_id: ${{ secrets.CF_ZONE_ID }}
@@ -46,6 +48,33 @@ jobs:
       - name: Send request to Cloudflare-protected server
         run: curl https://example.com/api
 ```
+
+### With Bot Fight Mode Bypass
+
+If you have [Super Bot Fight Mode (SBFM) or Bot Fight Mode (BFM)](https://developers.cloudflare.com/bots/get-started/super-bot-fight-mode/) enabled, WAF rules alone may not be sufficient as these modes [do not respect WAF skip rules](https://developers.cloudflare.com/bots/get-started/super-bot-fight-mode/). Use the `disable_bot_fight_mode` option to temporarily disable BFM during your workflow:
+
+```yaml
+name: Bypass Cloudflare with BFM Disabled
+on: [push]
+jobs:
+  manage-ip-whitelist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Bypass Cloudflare for GitHub Action
+        uses: xiaotianxt/bypass-cloudflare-for-github-action@v2.1.0
+        with:
+          cf_account_id: ${{ secrets.CF_ACCOUNT_ID }}
+          cf_zone_id: ${{ secrets.CF_ZONE_ID }}
+          cf_api_token: ${{ secrets.CF_API_TOKEN }}
+          disable_bot_fight_mode: 'true'
+      - name: Send request to Cloudflare-protected server
+        run: curl https://example.com/api
+```
+
+> [!NOTE]
+> The `disable_bot_fight_mode` option requires **Zone Settings > Edit** permission on your API token. The original BFM state is automatically restored after the job completes.
 
 ## Set Repo Secrets
 Remember to add your Cloudflare Account ID, Zone ID, and API Token to your GitHub repository > Secrets and Variables > Actions as `CF_ACCOUNT_ID`, `CF_ZONE_ID`, and `CF_API_TOKEN` respectively.
@@ -58,6 +87,7 @@ This Action requires a Cloudflare API Token, not the Global API Key. To create a
 4. Create a custom token with the following permissions:
    - **Account** > **Account Filter Lists** > **Edit** (required for IP list management)
    - **Zone** > **Zone WAF** > **Edit** (required for custom WAF rules)
+   - **Zone** > **Zone Settings** > **Edit** (required only if using `disable_bot_fight_mode`)
 5. Set the token to access the zone you're working with.
 6. Create the token and save it securely.
 
@@ -82,3 +112,4 @@ This Action requires a Cloudflare API Token, not the Global API Key. To create a
 
 3. **Cleanup**:
    - After the job completes (success or failure), automatically removes the runner's IP from the list
+   - If `disable_bot_fight_mode` was enabled, restores the original Bot Fight Mode settings
