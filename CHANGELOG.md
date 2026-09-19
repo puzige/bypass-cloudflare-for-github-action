@@ -1,3 +1,14 @@
+# Scoped safety fork (unreleased)
+
+- Native Node 24 main/post lifecycle with dependency-free fetch, bounded requests and immediate failure cleanup.
+- Opt-in `skip_bic`, exact `hostname`, and `path_prefix` inputs; temporary per-run WAF rules.
+- Append/delete only uniquely owned IP items; retain foreign entries and reject preexisting runner IPs.
+- Persist operation IDs and original BFM settings; restore and verify BFM before other cleanup.
+- Fail closed on legacy broad rules, uncertain writes and already-disabled BFM; document serialization and manual recovery limitations.
+- Add mock API and subprocess lifecycle tests; preserve upstream attribution and input defaults.
+
+Historical upstream notes follow. Corrections: regular BFM cannot be bypassed by WAF Skip, but Super Bot Fight Mode can. The regular BFM toggle affects the whole zone. Current token permissions are documented in README; the historical Zone Settings permission note below is outdated.
+
 ## v2.1.0
 
 ### Added
