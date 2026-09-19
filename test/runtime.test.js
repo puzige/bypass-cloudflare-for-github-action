@@ -30,6 +30,24 @@ test('HTTP 200 success:false fails without logging server bodies or token', asyn
   await assert.rejects(client.request('GET', '/anything'), error => !/secret/.test(error.message) && /failed/.test(error.message));
 });
 
+test('list reads respect the 500-item API cap on every cursor page', async () => {
+  const { state, action } = setup();
+  state.paginate = true;
+  state.items.push({ id: 'second', ip: '192.0.2.10', comment: 'another foreign entry' });
+  action.state.list = 'list';
+  const api = action.api.bind(action); const queries = [];
+  action.api = async (method, path, ...args) => {
+    const url = new URL(path, 'https://api.cloudflare.com');
+    assert.equal(method, 'GET');
+    assert.equal(url.searchParams.get('per_page'), '500');
+    assert.deepEqual([...url.searchParams.keys()].sort(), queries.length ? ['cursor', 'per_page'] : ['per_page']);
+    queries.push(url.searchParams.get('cursor'));
+    return api(method, path, ...args);
+  };
+  assert.deepEqual(await action.items(), state.items);
+  assert.deepEqual(queries, [null, 'page2']);
+});
+
 test('lifecycle preserves foreign entries and restores BFM FIRST, idempotent cleanup', async () => {
   const { state, action, saved } = setup({ disable: true, bic: true, hostname: 'admin.example.com', path: '/api/' });
   state.paginate = true;

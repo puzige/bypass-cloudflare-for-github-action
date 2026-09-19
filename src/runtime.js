@@ -77,7 +77,8 @@ export class Bypass {
   async items() {
     const all = []; let cursor = ''; const seen = new Set();
     do {
-      const data = await this.api('GET', `${this.account}/${this.state.list}/items?per_page=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+      // Cloudflare's List Items endpoint caps per_page at 500.
+      const data = await this.api('GET', `${this.account}/${this.state.list}/items?per_page=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
       if (!Array.isArray(data.result)) throw new Error('Invalid list items response');
       all.push(...data.result); cursor = data.result_info?.cursors?.after || '';
       if (cursor && seen.has(cursor)) throw new Error('Repeated list pagination cursor');
