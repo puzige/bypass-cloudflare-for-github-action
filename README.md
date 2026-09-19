@@ -1,116 +1,97 @@
-<h1 align='center'>
-<samp>Bypass Cloudflare for GitHub Action</samp>
-</h1>
-<p align='center'>
-  <samp>Never receive 403 Forbidden from Cloudflare again.</samp>
-</p>
+# Scoped Cloudflare bypass for GitHub Actions
 
-> [!NOTE]
-> Version `v2.0.0` addresses Cloudflare API changes affecting Free plan users. It includes breaking changes, such as updated API token permissions. If you are on a paid Cloudflare plan and the old workflow still works for you, continue using `v1.1.1`.
-
-Requests from GitHub Action servers to a Cloudflare proxied host may be blocked by [Cloudflare's Web Application Firewall(WAF)](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/) or [Bot Fight Mode](https://developers.cloudflare.com/bots/get-started/free/).
-This action automatically manages IP whitelisting by creating a Cloudflare custom IP list and WAF rule to bypass Cloudflare protections for GitHub Actions runners.
-
-## Features
-- Automatically retrieves the public IP of the GitHub Action runner.
-- Checks if a Cloudflare custom IP list exists, creating it if needed.
-- Creates a custom WAF rule to bypass Cloudflare protections for IPs in the list (only on first setup).
-- Adds the runner's IP to the Cloudflare IP list.
-- Automatically cleans up by removing the IP from the list after the job completes.
-
-## Inputs
-| Input                    | Description                                                                                      | Required | Default |
-| ------------------------ | ------------------------------------------------------------------------------------------------ | -------- | ------- |
-| `cf_account_id`          | Cloudflare Account ID                                                                            | true     |         |
-| `cf_zone_id`             | Cloudflare Zone ID                                                                               | true     |         |
-| `cf_api_token`           | Cloudflare API Token                                                                             | true     |         |
-| `disable_bot_fight_mode` | Disable Bot Fight Mode during workflow execution (requires Bot Management > Edit and Zone > Read permissions) | false    | `false` |
-| `bfm_propagation_delay`  | Seconds to wait after disabling Bot Fight Mode for settings to propagate                         | false    | `10`     |
+Fork of [xiaotianxt/bypass-cloudflare-for-github-action](https://github.com/xiaotianxt/bypass-cloudflare-for-github-action). This version keeps the original input names and opt-in defaults, adds optional Browser Integrity Check (BIC) skipping and hostname/path restrictions, and replaces the composite shell implementation with a dependency-free Node 24 main/post action.
 
 ## Usage
-To use this action, create a workflow in your repository's `.github/workflows` directory. Below is an example workflow file:
+
+Build your artifact **before** starting the bypass. Use this action immediately before the network operation. GitHub runs cleanup at the end of the job, not immediately after the next step.
 
 ```yaml
-name: Bypass Cloudflare for API Access
-on: [push]
+permissions:
+  contents: read
+
+# Serialize ALL jobs using these Cloudflare resources; see limitations below.
+concurrency:
+  group: cloudflare-bypass-example-account
+  cancel-in-progress: false
+
 jobs:
-  manage-ip-whitelist:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-      - name: Bypass Cloudflare for GitHub Action
-        uses: xiaotianxt/bypass-cloudflare-for-github-action@v2.1.0
+      # Build and push image here, before enabling bypass.
+      - uses: puzige/bypass-cloudflare-for-github-action@main
+        # Replace main with a reviewed full commit SHA before production use.
         with:
-          cf_account_id: ${{ secrets.CF_ACCOUNT_ID }}
-          cf_zone_id: ${{ secrets.CF_ZONE_ID }}
+          cf_account_id: ${{ vars.CF_ACCOUNT_ID }}
+          cf_zone_id: ${{ vars.CF_ZONE_ID }}
           cf_api_token: ${{ secrets.CF_API_TOKEN }}
-      - name: Send request to Cloudflare-protected server
-        run: curl https://example.com/api
-```
-
-### With Bot Fight Mode Bypass
-
-If you have [Super Bot Fight Mode (SBFM) or Bot Fight Mode (BFM)](https://developers.cloudflare.com/bots/get-started/super-bot-fight-mode/) enabled, WAF rules alone may not be sufficient as these modes [do not respect WAF skip rules](https://developers.cloudflare.com/bots/get-started/super-bot-fight-mode/). Use the `disable_bot_fight_mode` option to temporarily disable BFM during your workflow:
-
-```yaml
-name: Bypass Cloudflare with BFM Disabled
-on: [push]
-jobs:
-  manage-ip-whitelist:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-      - name: Bypass Cloudflare for GitHub Action
-        uses: xiaotianxt/bypass-cloudflare-for-github-action@v2.1.0
-        with:
-          cf_account_id: ${{ secrets.CF_ACCOUNT_ID }}
-          cf_zone_id: ${{ secrets.CF_ZONE_ID }}
-          cf_api_token: ${{ secrets.CF_API_TOKEN }}
+          hostname: admin.example.com
+          path_prefix: /api/
+          skip_bic: 'true'
           disable_bot_fight_mode: 'true'
-      - name: Send request to Cloudflare-protected server
-        run: curl https://example.com/api
+          bfm_propagation_delay: '10'
+      - name: Call deployment API
+        env:
+          DEPLOY_API_KEY: ${{ secrets.DEPLOY_API_KEY }}
+        run: >-
+          curl -4 --fail --silent --show-error --max-time 30
+          -H "x-api-key: $DEPLOY_API_KEY"
+          https://admin.example.com/api/status
 ```
 
-> [!NOTE]
-> The `disable_bot_fight_mode` option requires **Bot Management > Edit** and **Zone > Read** permissions on your API token (the endpoint used is `/zones/{zone_id}/bot_management`). The original BFM state is automatically restored after the job completes.
+Use an appropriate authenticated deployment request instead of the example read-only status call. Pin the action to a reviewed commit SHA. Do not run this action on untrusted pull request code with secrets.
 
-## Set Repo Secrets
-Remember to add your Cloudflare Account ID, Zone ID, and API Token to your GitHub repository > Secrets and Variables > Actions as `CF_ACCOUNT_ID`, `CF_ZONE_ID`, and `CF_API_TOKEN` respectively.
+## Inputs
 
-This Action requires a Cloudflare API Token, not the Global API Key. To create an API token:
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `cf_account_id` | required | Account containing the IP list |
+| `cf_zone_id` | required | Zone containing the temporary rule |
+| `cf_api_token` | required | Scoped Cloudflare API token |
+| `disable_bot_fight_mode` | `false` | Temporarily disable **zone-wide** BFM; requires serialization |
+| `bfm_propagation_delay` | `10` | Integer seconds (0–300) after disabling BFM |
+| `skip_bic` | `false` | Include `bic` in skip products |
+| `hostname` | empty | Exact DNS hostname, not URL or wildcard |
+| `path_prefix` | empty | Literal path prefix starting with `/`; no query, fragment or escaping |
 
-1. Log in to the Cloudflare dashboard and click into an account.
-2. On the right sidebar, go to "API" > "Get your API token".
-3. Click "Account API Tokens" > "Create Token" > "Create Custom Token".
-4. Create a custom token with the following permissions:
-   - **Account** > **Account Filter Lists** > **Edit** (required for IP list management)
-   - **Zone** > **Zone WAF** > **Edit** (required for custom WAF rules)
-   - **Zone** > **Bot Management** > **Edit** (required only if using `disable_bot_fight_mode`)
-   - **Zone** > **Zone** > **Read** (required only if using `disable_bot_fight_mode`)
-5. Set the token to access the zone you're working with.
-6. Create the token and save it securely.
+The skip rule always requires **both shared-list membership and this runner's exact IP**, plus any supplied hostname and path. Path matching is prefix matching: `/api` also matches `/apix`; use `/api/` if appropriate. Empty hostname/path inputs preserve a broad scope for the current runner. The rule skips remaining custom rules, managed WAF, rate limiting and Super Bot Fight Mode, matching the upstream protection categories; BIC is additionally skipped only when opted in.
 
-> [!IMPORTANT]
-> The first time this workflow runs, the Custom WAF Rule is created. After the first run, you can remove the `Zone WAF > Edit` permission from the API token.
+Regular Bot Fight Mode is **not** bypassed by a WAF skip rule. Its opt-in toggle affects the **whole zone**, regardless of the hostname/path inputs. This is not a per-request BFM exception.
 
-## Limitations
+## Token permissions
 
-- Cloudflare Free plan allows only **one custom IP list** per zone. If you already use a custom list, this action cannot create an additional one. [Learn more](https://developers.cloudflare.com/waf/tools/lists/#limits).
-- Cloudflare Free plan allows only **five custom WAF rules** per zone. If you are already at the quota, the initial setup step that creates the bypass rule will fail. [Learn more](https://developers.cloudflare.com/waf/custom-rules/limits/).
+- Account → Account Rule Lists → Edit (API permission: `Account Rule Lists Write`; sometimes shown as Account Filter Lists), limited to the chosen account.
+- Zone → Zone WAF → Edit, limited to the chosen zone.
+- Only with `disable_bot_fight_mode: 'true'`: Zone → Bot Management → Edit and Zone → Zone → Read, limited to the chosen zone.
 
-## How It Works
+Unlike upstream's setup-only rule, this fork creates and removes a temporary rule **on every run**, so Zone WAF Edit must remain available every run. Other compatibility changes: preexisting runner IPs are rejected instead of borrowed; legacy broad rules fail closed; BFM opt-in requires BFM initially enabled. This is input-compatible, not behavior-identical.
 
-1. **First Run (Setup)**: 
-   - Checks if the IP list `bypass_cloudflare_for_github_action_list` exists
-   - If not found, creates the IP list and a custom WAF rule that skips Cloudflare protections for IPs in the list
-   - Adds the runner's IP to the list
+## Cleanup and recovery
 
-2. **Subsequent Runs**:
-   - Reuses the existing IP list
-   - Adds the runner's IP to the list
+The Node action declares a post handler before main runs. Non-secret state (unique ownership marker, original BFM booleans, list operation ID) is saved before mutations where possible. Main failure immediately attempts cleanup; post retries it. Cleanup restores BFM first, verifies `fight_mode` and `enable_js`, then deletes only its own exact temporary rule and IP item IDs. Foreign list entries/rules are never cleared. Rule expressions modified during the job require manual review rather than deletion. The shared list and an empty ruleset, if created, remain reusable.
 
-3. **Cleanup**:
-   - After the job completes (success or failure), automatically removes the runner's IP from the list
-   - If `disable_bot_fight_mode` was enabled, restores the original Bot Fight Mode settings
+Requests have timeouts; HTTP errors and Cloudflare `success: false` fail the action. Async list operations are polled, paginated item reads are supported, and BFM restoration has bounded retries/readback. Write responses lost in transit are recovered using unique comments/descriptions where possible. An unresolved async write remains an error with retry state, never a claimed success. API completion does not guarantee global edge propagation; use a bounded retry of your own **safe/read-only** connectivity check before a non-idempotent deployment request.
+
+**No post handler can guarantee recovery after runner loss, forced cancellation, or Cloudflare API failure.** For unattended production, use independent monitoring/recovery. On failure:
+
+1. Verify and restore BFM to the pre-run settings (`fight_mode` and `enable_js`) first.
+2. Inspect the custom rule with the run's `scoped-gha:<UUID>` description; remove it only after verifying ownership.
+3. Inspect the shared list and remove only items with that exact comment. Never empty the whole list.
+4. Do not start another BFM-changing run until restoration is confirmed.
+
+The action logs no tokens or API response bodies. GitHub action state contains no API credentials.
+
+## Concurrency and migration
+
+- Serialize callers sharing the Cloudflare account/list, including initial list/ruleset creation: Cloudflare permits only one pending bulk list operation per account. Busy API failures fail closed rather than replaying uncertain writes.
+- **BFM-changing jobs must never overlap within a zone**, even across repositories. GitHub `concurrency` only coordinates within one repository: multiple repositories need a shared deployment coordinator/lock. Refusing an already-disabled BFM is a safety check, not a distributed lock; two simultaneous reads can still race.
+- Jobs sharing a public egress IP must be serialized. An existing matching address or subnet is rejected without modification. Ownership markers protect distinct existing entries, but are not a concurrency guarantee.
+- Uses `https://api.ipify.org` for IPv4 egress detection, with no Cloudflare token sent to that service. The deployment request must use the same egress/family (e.g. `curl -4`); changing VPN/proxy/network between steps invalidates the exception.
+- Reuses the upstream list name `bypass_cloudflare_for_github_action_list` to avoid consuming another list quota. An active broad legacy rule referencing that list must be reviewed and manually removed/disabled before using this fork. The action will not delete or silently narrow someone else's rule.
+- A spare custom rule slot and list item quota are needed. This action changes Cloudflare WAF/BFM settings, but does not change server firewall rules, listening ports, or application deployments.
+- Use a current GitHub-hosted runner or a self-hosted runner supporting Node 24 actions.
+
+## Tests
+
+Run `npm test` with Node 24+. Tests mock Cloudflare/IP responses; no credentials or external requests are needed. The suite covers scoped expressions, validation, foreign-entry preservation, asynchronous operation recovery, partial failures, BFM restoration ordering/failure and actual main/post subprocess state exchange. These tests do not replace a separately authorized live connectivity smoke test.
